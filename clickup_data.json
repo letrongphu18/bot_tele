@@ -7983,3 +7983,47 @@
 
 ==================================================
 
+{
+  "event": "taskUpdated",
+  "history_items": [
+    {
+      "id": "4780296433839333830",
+      "type": 1,
+      "date": "1760724010466",
+      "field": "status",
+      "parent_id": "901812388988",
+      "data": {
+        "status_type": "closed"
+      },
+      "source": null,
+      "user": {
+        "id": 294794940,
+        "username": "Trọng Phú lê",
+        "email": "phu.lt@charm.contact",
+        "color": "#595d66",
+        "initials": "TL",
+        "profilePicture": null,
+        "role": 2,
+        "role_subtype": 0
+      },
+      "before": {
+        "status": "to do",
+        "color": "#87909e",
+        "orderindex": 0,
+        "type": "open"
+      },
+      "after": {
+        "status": "completed",
+        "color": "#008844",
+        "orderindex": 2,
+        "type": "closed"
+      }
+    }
+  ],
+  "task_id": "86ev6kayz",
+  "team_id": "90181891084",
+  "webhook_id": "b488c03b-1370-4449-9d54-4fb9b75e244d"
+}
+
+==================================================
+

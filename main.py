@@ -33,7 +33,13 @@ print(f"CLICKUP_TEAM_ID: {CLICKUP_TEAM_ID}")
 print("="*50)
 
 TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+WEBHOOK_URL = f"https://bot-tele-lztd.onrender.com"
 
+# Chạy 1 lần để set webhook
+def set_webhook():
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook"
+    response = requests.post(url, data={"url": WEBHOOK_URL})
+    print(response.text)
 # === HÀM GỬI TELEGRAM ===
 def send_message(text, chat_id=None):
     """Gửi message tới Telegram"""
@@ -547,6 +553,6 @@ def schedule_daily_report():
     scheduler.start()
     print("✅ Daily report scheduled for 22:00 every day (Asia/Ho_Chi_Minh)")
 
-if __name__ == '__main__':
-    schedule_daily_report()
-    app.run(host="0.0.0.0", port=5000, debug=False, use_reloader=False)
+# if __name__ == '__main__':
+#     schedule_daily_report()
+#     app.run(host="0.0.0.0", port=5000, debug=False, use_reloader=False)
