@@ -59,7 +59,6 @@ def send_message(text, chat_id=None):
         print(f"❌ Error sending message: {e}")
         return None
 
-# === HÀM LẤY THÔNG TIN TASK TỪ CLICKUP API ===
 def get_task_info(task_id):
     """Lấy thông tin chi tiết task từ ClickUp API"""
     url = f"https://api.clickup.com/api/v2/task/{task_id}"
