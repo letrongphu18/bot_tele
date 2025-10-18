@@ -150,7 +150,7 @@ def get_priority_text(priority_data):
     
     return priority_map.get(priority_id, "Không xác định")
 
-# === GOOGLE SHEET FUNCTIONS ===
+# === GOOGLE SHEET FUNCTIONS === 
 def get_gsheet_client():
     """Kết nối tới Google Sheet"""
     try:
