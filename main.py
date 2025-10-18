@@ -160,17 +160,26 @@ def get_gsheet_client():
         
         print(f"🔍 Checking credentials... (length: {len(GOOGLE_CREDENTIALS)} chars)")
         
-        # FIX: Replace \\n với \n thật
-        creds_json_fixed = GOOGLE_CREDENTIALS.replace('\\n', '\n')
-        
         print("🔄 Parsing JSON credentials...")
         try:
-            creds_dict = json.loads(creds_json_fixed)
+            # Parse JSON trực tiếp - Render đã tự động xử lý escape characters
+            creds_dict = json.loads(GOOGLE_CREDENTIALS)
             print("✅ JSON parsed successfully!")
         except json.JSONDecodeError as je:
             print(f"❌ JSON Parse Error: {je}")
             print(f"📝 First 200 chars: {GOOGLE_CREDENTIALS[:200]}")
-            return None
+            
+            # Thử cách 2: Raw string
+            print("🔄 Trying alternative parsing method...")
+            try:
+                # Decode string nếu có escape characters
+                import codecs
+                decoded = codecs.decode(GOOGLE_CREDENTIALS, 'unicode_escape')
+                creds_dict = json.loads(decoded)
+                print("✅ JSON parsed with unicode_escape!")
+            except Exception as e2:
+                print(f"❌ Alternative parsing also failed: {e2}")
+                return None
         
         print("🔐 Creating credentials from service account...")
         credentials = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
