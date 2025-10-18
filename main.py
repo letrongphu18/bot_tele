@@ -7,6 +7,8 @@ from dotenv import load_dotenv
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 import pytz
+import gspread
+from google.oauth2.service_account import Credentials
 
 # ⭐ QUAN TRỌNG: Load file .env
 load_dotenv()
@@ -16,9 +18,16 @@ app = Flask(__name__)
 # === CONFIG ===
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
-# ❌ XÓA FALLBACK TOKEN - BẮTY PHẢI CÓ TRONG .env
 CLICKUP_API_TOKEN = os.getenv("CLICKUP_API_TOKEN")
 CLICKUP_TEAM_ID = os.getenv("CLICKUP_TEAM_ID")
+
+# === GOOGLE SHEET CONFIG ===
+SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
+GOOGLE_CREDENTIALS = os.getenv("GOOGLE_CREDENTIALS_JSON")
+SHEET_ID = os.getenv("GOOGLE_SHEET_ID")
+
+# Timezone Việt Nam
+VN_TZ = pytz.timezone('Asia/Ho_Chi_Minh')
 
 # Lưu trữ task của user trong ngày (in-memory)
 user_tasks = {}
@@ -30,16 +39,62 @@ print(f"BOT_TOKEN: {BOT_TOKEN[:20]}..." if BOT_TOKEN else "BOT_TOKEN: ❌ KHÔNG
 print(f"CHAT_ID: {CHAT_ID}" if CHAT_ID else "CHAT_ID: ❌ KHÔNG CÓ")
 print(f"CLICKUP_API_TOKEN: {CLICKUP_API_TOKEN[:20]}..." if CLICKUP_API_TOKEN else "CLICKUP_API_TOKEN: ❌ KHÔNG CÓ")
 print(f"CLICKUP_TEAM_ID: {CLICKUP_TEAM_ID}")
+print(f"GOOGLE_SHEET_ID: {SHEET_ID}" if SHEET_ID else "GOOGLE_SHEET_ID: ❌ KHÔNG CÓ")
+print(f"⏰ Server timezone: {datetime.datetime.now(VN_TZ).strftime('%H:%M:%S %d/%m/%Y')}")
 print("="*50)
 
 TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-WEBHOOK_URL = f"https://bot-tele-lztd.onrender.com"
+WEBHOOK_URL = f"https://bot-tele-7jxc.onrender.com"
 
-# Chạy 1 lần để set webhook
-def set_webhook():
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook"
-    response = requests.post(url, data={"url": WEBHOOK_URL})
-    print(response.text)
+# === HÀM THỜI GIAN (ĐÃ FIX TIMEZONE) ===
+def get_vn_now():
+    """Lấy thời gian hiện tại theo múi giờ Việt Nam"""
+    return datetime.datetime.now(VN_TZ)
+
+def format_timestamp(timestamp):
+    """Chuyển timestamp (ms) từ UTC sang datetime Việt Nam"""
+    if not timestamp:
+        return "Không có"
+    try:
+        # Convert từ milliseconds UTC sang datetime UTC
+        dt_utc = datetime.datetime.fromtimestamp(int(timestamp) / 1000, tz=pytz.UTC)
+        # Chuyển sang múi giờ Việt Nam
+        dt_vn = dt_utc.astimezone(VN_TZ)
+        return dt_vn.strftime("%H:%M %d/%m/%Y")
+    except:
+        return "Không xác định"
+
+def check_overdue(due_date):
+    """Kiểm tra task có quá hạn không (so với giờ VN)"""
+    if not due_date:
+        return False
+    try:
+        due_utc = datetime.datetime.fromtimestamp(int(due_date) / 1000, tz=pytz.UTC)
+        due_vn = due_utc.astimezone(VN_TZ)
+        now_vn = get_vn_now()
+        return now_vn > due_vn
+    except:
+        return False
+
+def calculate_duration(start_timestamp):
+    """Tính thời gian từ start_timestamp đến bây giờ"""
+    if not start_timestamp:
+        return ""
+    try:
+        start_utc = datetime.datetime.fromtimestamp(int(start_timestamp) / 1000, tz=pytz.UTC)
+        start_vn = start_utc.astimezone(VN_TZ)
+        now_vn = get_vn_now()
+        duration = now_vn - start_vn
+        
+        if duration.days > 0:
+            return f"{duration.days} ngày {duration.seconds // 3600} giờ"
+        else:
+            hours = duration.seconds // 3600
+            minutes = (duration.seconds % 3600) // 60
+            return f"{hours} giờ {minutes} phút"
+    except:
+        return ""
+
 # === HÀM GỬI TELEGRAM ===
 def send_message(text, chat_id=None):
     """Gửi message tới Telegram"""
@@ -80,7 +135,6 @@ def get_priority_text(priority_data):
     if not priority_data:
         return "Không có"
     
-    # Priority có thể là int hoặc dict
     if isinstance(priority_data, dict):
         priority_id = priority_data.get("priority")
     else:
@@ -95,34 +149,89 @@ def get_priority_text(priority_data):
     
     return priority_map.get(priority_id, "Không xác định")
 
-# === HÀM FORMAT THỜI GIAN ===
-def format_timestamp(timestamp):
-    """Chuyển timestamp (ms) sang datetime tiếng Việt"""
-    if not timestamp:
-        return "Không có"
+# === GOOGLE SHEET FUNCTIONS ===
+def get_gsheet_client():
+    """Kết nối tới Google Sheet"""
     try:
-        dt = datetime.datetime.fromtimestamp(int(timestamp) / 1000)
-        return dt.strftime("%H:%M %d/%m/%Y")
-    except:
-        return "Không xác định"
+        if GOOGLE_CREDENTIALS:
+            creds_dict = json.loads(GOOGLE_CREDENTIALS)
+            credentials = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
+            client = gspread.authorize(credentials)
+            return client
+        else:
+            print("❌ Không có GOOGLE_CREDENTIALS_JSON")
+            return None
+    except Exception as e:
+        print(f"❌ Error connecting to Google Sheet: {e}")
+        return None
 
-def check_overdue(due_date):
-    """Kiểm tra task có quá hạn không"""
-    if not due_date:
-        return False
+def init_sheet_headers():
+    """Tạo headers cho sheet lần đầu"""
     try:
-        due = datetime.datetime.fromtimestamp(int(due_date) / 1000)
-        now = datetime.datetime.now()
-        return now > due
-    except:
+        client = get_gsheet_client()
+        if not client:
+            return False
+        
+        sheet = client.open_by_key(SHEET_ID)
+        
+        try:
+            worksheet = sheet.worksheet("Tasks")
+            print("✅ Sheet 'Tasks' already exists")
+        except:
+            worksheet = sheet.add_worksheet(title="Tasks", rows=1000, cols=12)
+            headers = [
+                "Timestamp", "Task Name", "Assignee", "Status",
+                "Priority", "Created", "Due Date", "Completed",
+                "Duration", "On Time?", "URL", "Creator"
+            ]
+            worksheet.append_row(headers)
+            print("✅ Created sheet headers")
+        
+        return True
+    except Exception as e:
+        print(f"❌ Error init headers: {e}")
+        return False
+
+def backup_to_sheet(task_info):
+    """Lưu task vào Google Sheet"""
+    try:
+        client = get_gsheet_client()
+        if not client:
+            print("❌ Cannot get Google Sheet client")
+            return False
+        
+        sheet = client.open_by_key(SHEET_ID)
+        worksheet = sheet.worksheet("Tasks")
+        
+        row = [
+            task_info.get("timestamp", ""),
+            task_info.get("name", ""),
+            task_info.get("assignee", ""),
+            task_info.get("status", ""),
+            task_info.get("priority", ""),
+            task_info.get("created", ""),
+            task_info.get("due_date", ""),
+            task_info.get("completed", ""),
+            task_info.get("duration", ""),
+            task_info.get("on_time", ""),
+            task_info.get("url", ""),
+            task_info.get("creator", "")
+        ]
+        
+        worksheet.append_row(row)
+        print(f"✅ Backed up to Google Sheet: {task_info.get('name')}")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Error backup to sheet: {e}")
         return False
 
 # === DAILY REPORT ===
 def daily_report():
-    """Gửi báo cáo hàng ngày lúc 22h"""
+    """Gửi báo cáo hàng ngày lúc 22h (giờ VN)"""
     print("\n🔔 Tạo daily report...")
     
-    today_display = datetime.datetime.now().strftime("%d/%m/%Y")
+    today_display = get_vn_now().strftime("%d/%m/%Y")
     
     if not user_tasks:
         msg = f"""
@@ -171,21 +280,17 @@ def telegram_handler():
         message = data["message"]
         text = message.get("text", "")
         user = message.get("from", {})
-        user_id = user.get("id")
         user_name = user.get("first_name", "User")
         
         print(f"\n📨 Telegram message từ {user_name}: {text}")
         
         if text == "/report_eod":
-            today = datetime.datetime.now().strftime("%d/%m/%Y")
+            today = get_vn_now().strftime("%d/%m/%Y")
             
-            # Chỉ lấy task của người gõ lệnh
             user_completed = []
             user_pending = []
             
-            # Tìm username tương ứng với user_name từ user_tasks
             for username, tasks in user_tasks.items():
-                # Nếu tên username chứa tên của user hoặc user_name chứa username
                 if user_name.lower() in username.lower() or username.lower() in user_name.lower():
                     for task in tasks:
                         status = task.get("status", "").lower()
@@ -216,7 +321,6 @@ def telegram_handler():
             
             msg += "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
             
-            # Gửi vào GROUP (không riêng)
             send_message(msg)
             print(f"✅ Gửi report của {user_name} vào group")
     
@@ -224,10 +328,9 @@ def telegram_handler():
 
 # === ROUTE NHẬN WEBHOOK TỪ CLICKUP ===
 @app.route('/clickup', methods=['POST', 'GET'])
-
 def clickup_webhook():
     print("\n========== CLICKUP WEBHOOK RECEIVED ==========")
-    print(f"⏰ Time: {datetime.datetime.now()}")
+    print(f"⏰ Time (VN): {get_vn_now().strftime('%H:%M:%S %d/%m/%Y')}")
     print(f"🔗 Remote Address: {request.remote_addr}")
     
     data = request.get_json()
@@ -272,7 +375,7 @@ def clickup_webhook():
     else:
         assignees_text = "Chưa phân công"
     
-    # Priority - FIX CHÍNH
+    # Priority
     priority_data = task_data.get("priority")
     priority_text = get_priority_text(priority_data)
     
@@ -288,8 +391,8 @@ def clickup_webhook():
     date_created = task_data.get("date_created")
     created_time = format_timestamp(date_created)
     
-    # Thời gian hiện tại
-    now = datetime.datetime.now().strftime("%H:%M:%S %d/%m/%Y")
+    # Thời gian hiện tại (giờ VN)
+    now = get_vn_now().strftime("%H:%M:%S %d/%m/%Y")
     
     # Người thực hiện action
     action_user = "Không rõ"
@@ -300,7 +403,6 @@ def clickup_webhook():
             action_user = user_info.get("username", "Không rõ")
     
     # Lưu task cho user
-    today = datetime.datetime.now().strftime("%Y-%m-%d")
     if action_user not in user_tasks:
         user_tasks[action_user] = []
     
@@ -349,8 +451,8 @@ def clickup_webhook():
                     
                     if due_date:
                         try:
-                            due_datetime = datetime.datetime.fromtimestamp(int(due_date) / 1000)
-                            now_datetime = datetime.datetime.now()
+                            due_datetime = datetime.datetime.fromtimestamp(int(due_date) / 1000, tz=pytz.UTC).astimezone(VN_TZ)
+                            now_datetime = get_vn_now()
                             time_diff = due_datetime - now_datetime
                             
                             hours_diff = time_diff.total_seconds() / 3600
@@ -379,19 +481,9 @@ def clickup_webhook():
                     
                     time_to_complete = ""
                     if date_created:
-                        try:
-                            created_dt = datetime.datetime.fromtimestamp(int(date_created) / 1000)
-                            now_dt = datetime.datetime.now()
-                            duration = now_dt - created_dt
-                            
-                            if duration.days > 0:
-                                time_to_complete = f"\n⏱️ Thời gian làm: <b>{duration.days} ngày {duration.seconds // 3600} giờ</b>"
-                            else:
-                                hours = duration.seconds // 3600
-                                minutes = (duration.seconds % 3600) // 60
-                                time_to_complete = f"\n⏱️ Thời gian làm: <b>{hours} giờ {minutes} phút</b>"
-                        except Exception as e:
-                            print(f"❌ Error calculating duration: {e}")
+                        duration_str = calculate_duration(date_created)
+                        if duration_str:
+                            time_to_complete = f"\n⏱️ Thời gian làm: <b>{duration_str}</b>"
                     
                     msg = f"""
 ✅ <b>TASK HOÀN THÀNH</b>{completion_status}
@@ -406,6 +498,30 @@ def clickup_webhook():
 🔗 <a href="{task_url}">Xem chi tiết</a>
 """
                     send_message(msg.strip())
+                    
+                    # ⭐ BACKUP VÀO GOOGLE SHEET
+                    duration_str = calculate_duration(date_created) if date_created else ""
+                    on_time_status = "Không xác định"
+                    
+                    if due_date:
+                        on_time_status = "Trễ" if is_overdue else "Đúng hạn"
+                    
+                    backup_info = {
+                        "timestamp": now,
+                        "name": task_name,
+                        "assignee": action_user,
+                        "status": new_status,
+                        "priority": priority_text,
+                        "created": created_time,
+                        "due_date": due_date_text,
+                        "completed": now,
+                        "duration": duration_str,
+                        "on_time": on_time_status,
+                        "url": task_url,
+                        "creator": creator_name
+                    }
+                    
+                    backup_to_sheet(backup_info)
                 
                 else:
                     msg = f"""
@@ -541,17 +657,42 @@ def test():
     send_message("🧪 Test message từ ClickUp bot!")
     return "Message sent!", 200
 
+@app.route('/init_sheet', methods=['GET'])
+def init_sheet_route():
+    """Khởi tạo Google Sheet headers"""
+    result = init_sheet_headers()
+    if result:
+        return "✅ Sheet initialized! Check your Google Sheet.", 200
+    else:
+        return "❌ Failed to init sheet. Check Render logs for errors.", 500
+
+@app.route('/setup_webhook', methods=['GET'])
+def setup_webhook():
+    """Set webhook cho Telegram - Chỉ gọi 1 lần sau khi deploy"""
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook"
+    telegram_webhook = f"{WEBHOOK_URL}/telegram"
+    
+    response = requests.post(url, data={"url": telegram_webhook})
+    result = response.json()
+    
+    if result.get("ok"):
+        return f"✅ Webhook đã được set thành công!<br>URL: {telegram_webhook}<br>Response: {result}", 200
+    else:
+        return f"❌ Lỗi set webhook!<br>Response: {result}", 500
+
 # === SCHEDULER ===
 scheduler = BackgroundScheduler()
 
 def schedule_daily_report():
-    """Lên lịch báo cáo hàng ngày lúc 22:00"""
+    """Lên lịch báo cáo hàng ngày lúc 22:00 (giờ VN)"""
     tz = pytz.timezone('Asia/Ho_Chi_Minh')
     trigger = CronTrigger(hour=22, minute=0, timezone=tz)
     scheduler.add_job(daily_report, trigger=trigger, id='daily_report', replace_existing=True)
     scheduler.start()
     print("✅ Daily report scheduled for 22:00 every day (Asia/Ho_Chi_Minh)")
 
-# if __name__ == '__main__':
-#     schedule_daily_report()
-#     app.run(host="0.0.0.0", port=5000, debug=False, use_reloader=False)
+if __name__ == '__main__':
+    schedule_daily_report()
+    # Lấy port từ biến môi trường (Render tự động set)
+    port = int(os.getenv("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
