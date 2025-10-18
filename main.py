@@ -40,6 +40,7 @@ print(f"CHAT_ID: {CHAT_ID}" if CHAT_ID else "CHAT_ID: ❌ KHÔNG CÓ")
 print(f"CLICKUP_API_TOKEN: {CLICKUP_API_TOKEN[:20]}..." if CLICKUP_API_TOKEN else "CLICKUP_API_TOKEN: ❌ KHÔNG CÓ")
 print(f"CLICKUP_TEAM_ID: {CLICKUP_TEAM_ID}")
 print(f"GOOGLE_SHEET_ID: {SHEET_ID}" if SHEET_ID else "GOOGLE_SHEET_ID: ❌ KHÔNG CÓ")
+print(f"GOOGLE_CREDENTIALS: {'✅ CÓ (' + str(len(GOOGLE_CREDENTIALS)) + ' chars)' if GOOGLE_CREDENTIALS else '❌ KHÔNG CÓ'}")
 print(f"⏰ Server timezone: {datetime.datetime.now(VN_TZ).strftime('%H:%M:%S %d/%m/%Y')}")
 print("="*50)
 
@@ -153,31 +154,56 @@ def get_priority_text(priority_data):
 def get_gsheet_client():
     """Kết nối tới Google Sheet"""
     try:
-        if GOOGLE_CREDENTIALS:
-            creds_dict = json.loads(GOOGLE_CREDENTIALS)
-            credentials = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
-            client = gspread.authorize(credentials)
-            return client
-        else:
-            print("❌ Không có GOOGLE_CREDENTIALS_JSON")
+        if not GOOGLE_CREDENTIALS:
+            print("❌ Không có GOOGLE_CREDENTIALS_JSON trong environment")
             return None
+        
+        print(f"🔍 Checking credentials... (length: {len(GOOGLE_CREDENTIALS)} chars)")
+        
+        # FIX: Replace \\n với \n thật
+        creds_json_fixed = GOOGLE_CREDENTIALS.replace('\\n', '\n')
+        
+        print("🔄 Parsing JSON credentials...")
+        try:
+            creds_dict = json.loads(creds_json_fixed)
+            print("✅ JSON parsed successfully!")
+        except json.JSONDecodeError as je:
+            print(f"❌ JSON Parse Error: {je}")
+            print(f"📝 First 200 chars: {GOOGLE_CREDENTIALS[:200]}")
+            return None
+        
+        print("🔐 Creating credentials from service account...")
+        credentials = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
+        
+        print("🔗 Authorizing gspread client...")
+        client = gspread.authorize(credentials)
+        
+        print("✅ Connected to Google Sheet successfully!")
+        return client
+        
     except Exception as e:
         print(f"❌ Error connecting to Google Sheet: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 def init_sheet_headers():
     """Tạo headers cho sheet lần đầu"""
     try:
+        print("\n📋 Initializing sheet headers...")
         client = get_gsheet_client()
         if not client:
+            print("❌ Cannot get gsheet client in init_sheet_headers")
             return False
         
+        print(f"📂 Opening sheet with ID: {SHEET_ID}")
         sheet = client.open_by_key(SHEET_ID)
         
         try:
             worksheet = sheet.worksheet("Tasks")
             print("✅ Sheet 'Tasks' already exists")
         except:
+            print("📝 Creating new worksheet 'Tasks'...")
             worksheet = sheet.add_worksheet(title="Tasks", rows=1000, cols=12)
             headers = [
                 "Timestamp", "Task Name", "Assignee", "Status",
@@ -185,19 +211,22 @@ def init_sheet_headers():
                 "Duration", "On Time?", "URL", "Creator"
             ]
             worksheet.append_row(headers)
-            print("✅ Created sheet headers")
+            print("✅ Created sheet 'Tasks' with headers")
         
         return True
     except Exception as e:
         print(f"❌ Error init headers: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 def backup_to_sheet(task_info):
     """Lưu task vào Google Sheet"""
     try:
+        print(f"\n💾 Backing up task: {task_info.get('name')}")
         client = get_gsheet_client()
         if not client:
-            print("❌ Cannot get Google Sheet client")
+            print("❌ Cannot get Google Sheet client in backup_to_sheet")
             return False
         
         sheet = client.open_by_key(SHEET_ID)
@@ -224,6 +253,8 @@ def backup_to_sheet(task_info):
         
     except Exception as e:
         print(f"❌ Error backup to sheet: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 # === DAILY REPORT ===
