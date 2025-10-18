@@ -10,7 +10,7 @@ import pytz
 import gspread
 from google.oauth2.service_account import Credentials
 
-# ⭐ QUAN TRỌNG: Load file .env
+# ⭐ QUAN TRỌNG: Load file .env 
 load_dotenv()
 
 app = Flask(__name__)
