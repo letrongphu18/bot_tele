@@ -10,7 +10,6 @@ import pytz
 import gspread
 from google.oauth2.service_account import Credentials
 
-# ⭐ QUAN TRỌNG: Load file .env
 load_dotenv()
 
 app = Flask(__name__)
@@ -20,25 +19,22 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 CLICKUP_API_TOKEN = os.getenv("CLICKUP_API_TOKEN")
 CLICKUP_TEAM_ID = os.getenv("CLICKUP_TEAM_ID")
+CLICKUP_LIST_ID = os.getenv("CLICKUP_LIST_ID")
 
 # === GOOGLE SHEET CONFIG ===
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
 GOOGLE_CREDENTIALS = os.getenv("GOOGLE_CREDENTIALS_JSON")
 SHEET_ID = os.getenv("GOOGLE_SHEET_ID")
 
-# Timezone Việt Nam
 VN_TZ = pytz.timezone('Asia/Ho_Chi_Minh')
 
-# Lưu trữ task của user trong ngày (in-memory)
-user_tasks = {}
-
-# Debug: In ra để check đã load được chưa
 print("="*50)
 print("🔍 KIỂM TRA CONFIG:")
 print(f"BOT_TOKEN: {BOT_TOKEN[:20]}..." if BOT_TOKEN else "BOT_TOKEN: ❌ KHÔNG CÓ")
 print(f"CHAT_ID: {CHAT_ID}" if CHAT_ID else "CHAT_ID: ❌ KHÔNG CÓ")
 print(f"CLICKUP_API_TOKEN: {CLICKUP_API_TOKEN[:20]}..." if CLICKUP_API_TOKEN else "CLICKUP_API_TOKEN: ❌ KHÔNG CÓ")
 print(f"CLICKUP_TEAM_ID: {CLICKUP_TEAM_ID}")
+print(f"CLICKUP_LIST_ID: {CLICKUP_LIST_ID}" if CLICKUP_LIST_ID else "CLICKUP_LIST_ID: ❌ KHÔNG CÓ")
 print(f"GOOGLE_SHEET_ID: {SHEET_ID}" if SHEET_ID else "GOOGLE_SHEET_ID: ❌ KHÔNG CÓ")
 print(f"GOOGLE_CREDENTIALS: {'✅ CÓ (' + str(len(GOOGLE_CREDENTIALS)) + ' chars)' if GOOGLE_CREDENTIALS else '❌ KHÔNG CÓ'}")
 print(f"⏰ Server timezone: {datetime.datetime.now(VN_TZ).strftime('%H:%M:%S %d/%m/%Y')}")
@@ -47,26 +43,21 @@ print("="*50)
 TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 WEBHOOK_URL = f"https://bot-tele-7jxc.onrender.com"
 
-# === HÀM THỜI GIAN (ĐÃ FIX TIMEZONE) ===
+# === HÀM THỜI GIAN ===
 def get_vn_now():
-    """Lấy thời gian hiện tại theo múi giờ Việt Nam"""
     return datetime.datetime.now(VN_TZ)
 
 def format_timestamp(timestamp):
-    """Chuyển timestamp (ms) từ UTC sang datetime Việt Nam"""
     if not timestamp:
         return "Không có"
     try:
-        # Convert từ milliseconds UTC sang datetime UTC
         dt_utc = datetime.datetime.fromtimestamp(int(timestamp) / 1000, tz=pytz.UTC)
-        # Chuyển sang múi giờ Việt Nam
         dt_vn = dt_utc.astimezone(VN_TZ)
         return dt_vn.strftime("%H:%M %d/%m/%Y")
     except:
         return "Không xác định"
 
 def check_overdue(due_date):
-    """Kiểm tra task có quá hạn không (so với giờ VN)"""
     if not due_date:
         return False
     try:
@@ -78,7 +69,6 @@ def check_overdue(due_date):
         return False
 
 def calculate_duration(start_timestamp):
-    """Tính thời gian từ start_timestamp đến bây giờ"""
     if not start_timestamp:
         return ""
     try:
@@ -98,7 +88,6 @@ def calculate_duration(start_timestamp):
 
 # === HÀM GỬI TELEGRAM ===
 def send_message(text, chat_id=None):
-    """Gửi message tới Telegram"""
     if chat_id is None:
         chat_id = CHAT_ID
     
@@ -115,8 +104,8 @@ def send_message(text, chat_id=None):
         print(f"❌ Error sending message: {e}")
         return None
 
+# === CLICKUP API FUNCTIONS ===
 def get_task_info(task_id):
-    """Lấy thông tin chi tiết task từ ClickUp API"""
     url = f"https://api.clickup.com/api/v2/task/{task_id}"
     headers = {"Authorization": CLICKUP_API_TOKEN}
     
@@ -131,8 +120,176 @@ def get_task_info(task_id):
         print(f"❌ Error getting task info: {e}")
         return None
 
+def get_all_tasks_in_period(start_date, end_date):
+    if not CLICKUP_LIST_ID:
+        print("❌ CLICKUP_LIST_ID không được cấu hình!")
+        return []
+    
+    # Lấy TẤT CẢ tasks từ List
+    url = f"https://api.clickup.com/api/v2/list/{CLICKUP_LIST_ID}/task"
+    headers = {"Authorization": CLICKUP_API_TOKEN}
+    params = {
+        "archived": "false",
+        "include_closed": "true"
+    }
+    
+    try:
+        print(f"\n🔍 Querying all tasks from List {CLICKUP_LIST_ID}...")
+        response = requests.get(url, headers=headers, params=params)
+        
+        if response.status_code == 200:
+            data = response.json()
+            all_tasks = data.get("tasks", [])
+            
+            # Filter theo thời gian TẠO trong Python
+            start_ms = int(start_date.timestamp() * 1000)
+            end_ms = int(end_date.timestamp() * 1000)
+            
+            filtered_tasks = []
+            for task in all_tasks:
+                date_created = task.get('date_created')
+                if date_created:
+                    created_ms = int(date_created)
+                    if start_ms <= created_ms <= end_ms:
+                        filtered_tasks.append(task)
+            
+            print(f"✅ Found {len(filtered_tasks)}/{len(all_tasks)} tasks in period")
+            return filtered_tasks
+        else:
+            print(f"❌ ClickUp API error: {response.status_code}")
+            print(f"Response: {response.text}")
+            return []
+    except Exception as e:
+        print(f"❌ Error getting tasks: {e}")
+        return []
+
+def get_today_tasks():
+    """Lấy TẤT CẢ tasks đang active (chưa hoàn thành) trong List"""
+    if not CLICKUP_LIST_ID:
+        print("❌ CLICKUP_LIST_ID không được cấu hình!")
+        return []
+    
+    url = f"https://api.clickup.com/api/v2/list/{CLICKUP_LIST_ID}/task"
+    headers = {"Authorization": CLICKUP_API_TOKEN}
+    params = {
+        "archived": "false",
+        "include_closed": "true"  # Bao gồm cả tasks đã hoàn thành để tính KPI
+    }
+    
+    try:
+        print(f"\n🔍 Lấy tất cả tasks trong List {CLICKUP_LIST_ID}...")
+        response = requests.get(url, headers=headers, params=params)
+        
+        if response.status_code == 200:
+            data = response.json()
+            all_tasks = data.get("tasks", [])
+            print(f"✅ Tìm thấy {len(all_tasks)} tasks")
+            return all_tasks
+        else:
+            print(f"❌ ClickUp API error: {response.status_code}")
+            return []
+    except Exception as e:
+        print(f"❌ Error getting tasks: {e}")
+        return []
+
+def get_week_tasks():
+    """Lấy tasks được TẠO trong tuần này (cho KPI tuần)"""
+    now = get_vn_now()
+    days_since_monday = now.weekday()
+    start_of_week = (now - datetime.timedelta(days=days_since_monday)).replace(hour=0, minute=0, second=0, microsecond=0)
+    end_of_week = (start_of_week + datetime.timedelta(days=6)).replace(hour=23, minute=59, second=59, microsecond=999999)
+    
+    return get_all_tasks_in_period(start_of_week, end_of_week)
+
+def analyze_tasks(tasks):
+    stats = {
+        'total': len(tasks),
+        'completed': 0,
+        'pending': 0,
+        'overdue': 0,
+        'unassigned': 0,
+        'in_progress': 0,  # Thêm tasks đang làm
+        'by_user': {},
+        'by_priority': {
+            'urgent': 0,
+            'high': 0,
+            'normal': 0,
+            'low': 0
+        }
+    }
+    
+    for task in tasks:
+        status_info = task.get('status', {})
+        status = status_info.get('status', '').lower() if isinstance(status_info, dict) else ''
+        
+        # Check status
+        is_completed = status in ['complete', 'completed', 'closed', 'done', 'achevé']
+        is_in_progress = status in ['in progress', 'en cours', 'doing']
+        
+        if is_completed:
+            stats['completed'] += 1
+        else:
+            stats['pending'] += 1
+            
+            if is_in_progress:
+                stats['in_progress'] += 1
+            
+            # Check quá hạn
+            due_date = task.get('due_date')
+            if due_date and check_overdue(due_date):
+                stats['overdue'] += 1
+        
+        # Assignees
+        assignees = task.get('assignees', [])
+        
+        if not assignees or len(assignees) == 0:
+            stats['unassigned'] += 1
+        else:
+            for assignee in assignees:
+                username = assignee.get('username', 'Unknown')
+                
+                if username not in stats['by_user']:
+                    stats['by_user'][username] = {
+                        'completed': 0, 
+                        'pending': 0, 
+                        'overdue': 0,
+                        'in_progress': 0,
+                        'total': 0
+                    }
+                
+                stats['by_user'][username]['total'] += 1
+                
+                if is_completed:
+                    stats['by_user'][username]['completed'] += 1
+                else:
+                    stats['by_user'][username]['pending'] += 1
+                    
+                    if is_in_progress:
+                        stats['by_user'][username]['in_progress'] += 1
+                    
+                    due_date = task.get('due_date')
+                    if due_date and check_overdue(due_date):
+                        stats['by_user'][username]['overdue'] += 1
+        
+        # Priority
+        priority = task.get('priority')
+        if isinstance(priority, dict):
+            priority_id = priority.get('priority')
+        else:
+            priority_id = priority
+            
+        if priority_id == 1:
+            stats['by_priority']['urgent'] += 1
+        elif priority_id == 2:
+            stats['by_priority']['high'] += 1
+        elif priority_id == 3:
+            stats['by_priority']['normal'] += 1
+        elif priority_id == 4:
+            stats['by_priority']['low'] += 1
+    
+    return stats
+
 def get_priority_text(priority_data):
-    """Lấy text của priority từ ClickUp API"""
     if not priority_data:
         return "Không có"
     
@@ -152,67 +309,33 @@ def get_priority_text(priority_data):
 
 # === GOOGLE SHEET FUNCTIONS === 
 def get_gsheet_client():
-    """Kết nối tới Google Sheet"""
     try:
         if not GOOGLE_CREDENTIALS:
-            print("❌ Không có GOOGLE_CREDENTIALS_JSON trong environment")
+            print("❌ Không có GOOGLE_CREDENTIALS_JSON")
             return None
         
-        print(f"🔍 Checking credentials... (length: {len(GOOGLE_CREDENTIALS)} chars)")
-        
-        print("🔄 Parsing JSON credentials...")
-        try:
-            # Parse JSON trực tiếp - Render đã tự động xử lý escape characters
-            creds_dict = json.loads(GOOGLE_CREDENTIALS)
-            print("✅ JSON parsed successfully!")
-        except json.JSONDecodeError as je:
-            print(f"❌ JSON Parse Error: {je}")
-            print(f"📝 First 200 chars: {GOOGLE_CREDENTIALS[:200]}")
-            
-            # Thử cách 2: Raw string
-            print("🔄 Trying alternative parsing method...")
-            try:
-                # Decode string nếu có escape characters
-                import codecs
-                decoded = codecs.decode(GOOGLE_CREDENTIALS, 'unicode_escape')
-                creds_dict = json.loads(decoded)
-                print("✅ JSON parsed with unicode_escape!")
-            except Exception as e2:
-                print(f"❌ Alternative parsing also failed: {e2}")
-                return None
-        
-        print("🔐 Creating credentials from service account...")
+        creds_dict = json.loads(GOOGLE_CREDENTIALS)
         credentials = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
-        
-        print("🔗 Authorizing gspread client...")
         client = gspread.authorize(credentials)
         
-        print("✅ Connected to Google Sheet successfully!")
+        print("✅ Connected to Google Sheet")
         return client
         
     except Exception as e:
         print(f"❌ Error connecting to Google Sheet: {e}")
-        import traceback
-        traceback.print_exc()
         return None
 
 def init_sheet_headers():
-    """Tạo headers cho sheet lần đầu"""
     try:
-        print("\n📋 Initializing sheet headers...")
         client = get_gsheet_client()
         if not client:
-            print("❌ Cannot get gsheet client in init_sheet_headers")
             return False
         
-        print(f"📂 Opening sheet with ID: {SHEET_ID}")
         sheet = client.open_by_key(SHEET_ID)
         
         try:
             worksheet = sheet.worksheet("Tasks")
-            print("✅ Sheet 'Tasks' already exists")
         except:
-            print("📝 Creating new worksheet 'Tasks'...")
             worksheet = sheet.add_worksheet(title="Tasks", rows=1000, cols=12)
             headers = [
                 "Timestamp", "Task Name", "Assignee", "Status",
@@ -220,22 +343,16 @@ def init_sheet_headers():
                 "Duration", "On Time?", "URL", "Creator"
             ]
             worksheet.append_row(headers)
-            print("✅ Created sheet 'Tasks' with headers")
         
         return True
     except Exception as e:
         print(f"❌ Error init headers: {e}")
-        import traceback
-        traceback.print_exc()
         return False
 
 def backup_to_sheet(task_info):
-    """Lưu task vào Google Sheet"""
     try:
-        print(f"\n💾 Backing up task: {task_info.get('name')}")
         client = get_gsheet_client()
         if not client:
-            print("❌ Cannot get Google Sheet client in backup_to_sheet")
             return False
         
         sheet = client.open_by_key(SHEET_ID)
@@ -262,116 +379,170 @@ def backup_to_sheet(task_info):
         
     except Exception as e:
         print(f"❌ Error backup to sheet: {e}")
-        import traceback
-        traceback.print_exc()
         return False
 
-# === DAILY REPORT ===
-def daily_report():
-    """Gửi báo cáo hàng ngày lúc 22h (giờ VN)"""
-    print("\n🔔 Tạo daily report...")
+# === REPORT FUNCTIONS ===
+def generate_report(report_type="daily"):
+    now = get_vn_now()
+    today_display = now.strftime("%d/%m/%Y")
+    time_display = now.strftime("%H:%M")
     
-    today_display = get_vn_now().strftime("%d/%m/%Y")
+    # Lấy TẤT CẢ tasks đang active trong List
+    tasks = get_today_tasks()
+    stats = analyze_tasks(tasks)
     
-    if not user_tasks:
-        msg = f"""
-📊 <b>BÁO CÁO HỖ TRỢ KẾT THÚC NGÀY - {today_display}</b>
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-⚠️ Không có dữ liệu task trong ngày
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-"""
-        send_message(msg)
-        return
+    kpi = (stats['completed'] / stats['total'] * 100) if stats['total'] > 0 else 0
+    
+    if report_type == "morning":
+        header = f"🌅 <b>BÁO CÁO BUỔI SÁNG - {today_display} {time_display}</b>"
+        greeting = "☕ Chào buổi sáng! Tình hình công việc hiện tại:"
+    elif report_type == "noon":
+        header = f"☀️ <b>BÁO CÁO BUỔI TRƯA - {today_display} {time_display}</b>"
+        greeting = "🍜 Giờ nghỉ trưa! Cập nhật tiến độ:"
+    elif report_type == "evening":
+        header = f"🌙 <b>BÁO CÁO KẾT THÚC NGÀY - {today_display} {time_display}</b>"
+        greeting = "📊 Tổng kết ngày làm việc:"
+    else:
+        header = f"📊 <b>BÁO CÁO - {today_display} {time_display}</b>"
+        greeting = "📈 Tình hình công việc:"
     
     msg = f"""
-📊 <b>BÁO CÁO HỖ TRỢ KẾT THÚC NGÀY - {today_display}</b>
+{header}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{greeting}
 """
     
-    total_completed = 0
-    total_pending = 0
-    
-    for username, tasks in user_tasks.items():
-        completed = [t for t in tasks if t.get("status", "").lower() in ["complete", "completed", "closed", "done"]]
-        pending = [t for t in tasks if t.get("status", "").lower() not in ["complete", "completed", "closed", "done"]]
+    if stats['total'] == 0:
+        msg += f"\n⚠️ Chưa có task nào trong List"
+    else:
+        msg += f"\n📋 <b>Tổng tasks:</b> {stats['total']}"
+        msg += f"\n✅ <b>Đã hoàn thành:</b> {stats['completed']} (<b>{kpi:.1f}%</b>)"
         
-        total_completed += len(completed)
-        total_pending += len(pending)
+        if stats['in_progress'] > 0:
+            msg += f"\n🔄 <b>Đang làm:</b> {stats['in_progress']}"
         
-        msg += f"\n👤 <b>{username}</b>\n"
-        msg += f"   ✅ Hoàn thành: {len(completed)}\n"
-        msg += f"   ⏳ Chưa hoàn thành: {len(pending)}\n"
+        remaining = stats['pending'] - stats['in_progress']
+        if remaining > 0:
+            msg += f"\n⏳ <b>Chưa làm:</b> {remaining}"
+        
+        if stats['overdue'] > 0:
+            msg += f"\n🔴 <b>Quá hạn:</b> {stats['overdue']}"
+        
+        if stats['unassigned'] > 0:
+            msg += f"\n❓ <b>Chưa phân công:</b> {stats['unassigned']}"
+        
+        # KPI theo user
+        if stats['by_user']:
+            msg += f"\n\n👥 <b>KPI theo người:</b>"
+            
+            sorted_users = sorted(
+                stats['by_user'].items(), 
+                key=lambda x: (x[1]['completed'] / x[1]['total'] if x[1]['total'] > 0 else 0), 
+                reverse=True
+            )
+            
+            for username, user_stats in sorted_users:
+                user_kpi = (user_stats['completed'] / user_stats['total'] * 100) if user_stats['total'] > 0 else 0
+                
+                if user_kpi >= 90:
+                    icon = "🌟"
+                elif user_kpi >= 70:
+                    icon = "✅"
+                elif user_kpi >= 50:
+                    icon = "⚠️"
+                else:
+                    icon = "🔴"
+                
+                msg += f"\n   {icon} <b>{username}</b>: {user_stats['completed']}/{user_stats['total']} (<b>{user_kpi:.0f}%</b>)"
+                
+                if user_stats.get('in_progress', 0) > 0:
+                    msg += f" - 🔄 {user_stats['in_progress']} đang làm"
+                
+                if user_stats.get('overdue', 0) > 0:
+                    msg += f" - 🔴 {user_stats['overdue']} quá hạn"
+        
+        # Priority
+        total_priority = sum(stats['by_priority'].values())
+        if total_priority > 0:
+            msg += f"\n\n⚡ <b>Độ ưu tiên:</b>"
+            if stats['by_priority']['urgent'] > 0:
+                msg += f"\n   🔴 Khẩn cấp: {stats['by_priority']['urgent']}"
+            if stats['by_priority']['high'] > 0:
+                msg += f"\n   🟠 Cao: {stats['by_priority']['high']}"
+            if stats['by_priority']['normal'] > 0:
+                msg += f"\n   🟡 Bình thường: {stats['by_priority']['normal']}"
+            if stats['by_priority']['low'] > 0:
+                msg += f"\n   🔵 Thấp: {stats['by_priority']['low']}"
     
-    msg += f"\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-    msg += f"📈 <b>Tổng cộng:</b>\n"
-    msg += f"   ✅ Hoàn thành: {total_completed}\n"
-    msg += f"   ⏳ Chưa hoàn thành: {total_pending}\n"
-    msg += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    msg += f"\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     
+    if report_type == "morning":
+        msg += f"\n💪 Chúc mọi người làm việc hiệu quả!"
+    elif report_type == "noon":
+        msg += f"\n🔋 Nghỉ ngơi đầy năng lượng, chiều cố gắng nào!"
+    elif report_type == "evening":
+        if kpi >= 80:
+            msg += f"\n🎉 Xuất sắc! KPI rất cao!"
+        elif kpi >= 60:
+            msg += f"\n👏 Tốt lắm! Tiếp tục phát huy!"
+        else:
+            msg += f"\n💪 Ngày mai cố gắng hơn nữa nhé!"
+        msg += f"\n😴 Chúc ngủ ngon!"
+        
+        # KPI tuần (tasks được TẠO tuần này)
+        week_tasks = get_week_tasks()
+        if week_tasks:
+            week_stats = analyze_tasks(week_tasks)
+            kpi_week = (week_stats['completed'] / week_stats['total'] * 100) if week_stats['total'] > 0 else 0
+            
+            msg += f"\n\n📅 <b>KPI TUẦN NÀY (Tasks mới tạo):</b>"
+            msg += f"\n   • Tổng: {week_stats['total']}"
+            msg += f"\n   • Hoàn thành: {week_stats['completed']} (<b>{kpi_week:.1f}%</b>)"
+            msg += f"\n   • Còn lại: {week_stats['pending']}"
+            
+            if week_stats['overdue'] > 0:
+                msg += f"\n   • Quá hạn: {week_stats['overdue']}"
+    
+    return msg
+
+def morning_report():
+    print("\n🌅 Tạo morning report (9h)...")
+    msg = generate_report("morning")
     send_message(msg)
 
-# === ROUTE NHẬN MESSAGE TỪ TELEGRAM ===
+def noon_report():
+    print("\n☀️ Tạo noon report (12h)...")
+    msg = generate_report("noon")
+    send_message(msg)
+
+def evening_report():
+    print("\n🌙 Tạo evening report (22h)...")
+    msg = generate_report("evening")
+    send_message(msg)
+
+# === ROUTES ===
 @app.route('/telegram', methods=['POST'])
 def telegram_handler():
-    """Xử lý message từ Telegram"""
     data = request.get_json()
     
     if "message" in data:
         message = data["message"]
         text = message.get("text", "")
-        user = message.get("from", {})
-        user_name = user.get("first_name", "User")
-        
-        print(f"\n📨 Telegram message từ {user_name}: {text}")
         
         if text == "/report_eod":
-            today = get_vn_now().strftime("%d/%m/%Y")
-            
-            user_completed = []
-            user_pending = []
-            
-            for username, tasks in user_tasks.items():
-                if user_name.lower() in username.lower() or username.lower() in user_name.lower():
-                    for task in tasks:
-                        status = task.get("status", "").lower()
-                        if status in ["complete", "completed", "closed", "done"]:
-                            user_completed.append(task.get("name"))
-                        else:
-                            user_pending.append(task.get("name"))
-            
-            msg = f"""
-📊 <b>BÁO CÁO TIẾN ĐỘ - {today}</b>
-👤 <b>Người báo cáo: {user_name}</b>
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-"""
-            
-            if user_completed:
-                msg += f"\n✅ <b>Đã hoàn thành ({len(user_completed)}):</b>\n"
-                for task in user_completed:
-                    msg += f"  ✓ {task}\n"
-            else:
-                msg += f"\n✅ <b>Đã hoàn thành: 0</b>\n"
-            
-            if user_pending:
-                msg += f"\n⏳ <b>Chưa hoàn thành ({len(user_pending)}):</b>\n"
-                for task in user_pending:
-                    msg += f"  • {task}\n"
-            else:
-                msg += f"\n⏳ <b>Chưa hoàn thành: 0</b>\n"
-            
-            msg += "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            
+            msg = generate_report("evening")
             send_message(msg)
-            print(f"✅ Gửi report của {user_name} vào group")
+        
+        elif text == "/report_now":
+            msg = generate_report("daily")
+            send_message(msg)
     
     return {"ok": True}, 200
 
-# === ROUTE NHẬN WEBHOOK TỪ CLICKUP ===
 @app.route('/clickup', methods=['POST', 'GET'])
 def clickup_webhook():
     print("\n========== CLICKUP WEBHOOK RECEIVED ==========")
     print(f"⏰ Time (VN): {get_vn_now().strftime('%H:%M:%S %d/%m/%Y')}")
-    print(f"🔗 Remote Address: {request.remote_addr}")
     
     data = request.get_json()
     
@@ -380,10 +551,7 @@ def clickup_webhook():
             f.write(json.dumps(data, indent=2, ensure_ascii=False))
             f.write("\n\n" + "="*50 + "\n\n")
     except Exception as e:
-        print(f"❌ Error logging data: {e}")
-    
-    print("Body:", json.dumps(data, indent=2, ensure_ascii=False))
-    print("=====================================\n")
+        print(f"❌ Error logging: {e}")
     
     event = data.get("event", "")
     history_items = data.get("history_items", [])
@@ -392,22 +560,17 @@ def clickup_webhook():
     task_data = get_task_info(task_id)
     
     if not task_data:
-        print("❌ Không lấy được thông tin task từ API")
         return {"ok": True}, 200
     
-    # Parse thông tin task
     task_name = task_data.get("name", "Không rõ")
     task_url = task_data.get("url", "")
     
-    # Status
     status_info = task_data.get("status", {})
     status = status_info.get("status", "Không rõ") if isinstance(status_info, dict) else "Không rõ"
     
-    # Creator
     creator = task_data.get("creator", {})
     creator_name = creator.get("username", "Không rõ") if isinstance(creator, dict) else "Không rõ"
     
-    # Assignees
     assignees = task_data.get("assignees", [])
     if assignees:
         assignees_list = [a.get("username", "N/A") for a in assignees]
@@ -415,11 +578,9 @@ def clickup_webhook():
     else:
         assignees_text = "Chưa phân công"
     
-    # Priority
     priority_data = task_data.get("priority")
     priority_text = get_priority_text(priority_data)
     
-    # Due date
     due_date = task_data.get("due_date")
     due_date_text = "Không có"
     is_overdue = False
@@ -427,26 +588,17 @@ def clickup_webhook():
         due_date_text = format_timestamp(due_date)
         is_overdue = check_overdue(due_date)
     
-    # Date created
     date_created = task_data.get("date_created")
     created_time = format_timestamp(date_created)
     
-    # Thời gian hiện tại (giờ VN)
     now = get_vn_now().strftime("%H:%M:%S %d/%m/%Y")
     
-    # Người thực hiện action
     action_user = "Không rõ"
     if history_items:
         first_item = history_items[0]
         user_info = first_item.get("user", {})
         if isinstance(user_info, dict):
             action_user = user_info.get("username", "Không rõ")
-    
-    # Lưu task cho user
-    if action_user not in user_tasks:
-        user_tasks[action_user] = []
-    
-    # === XỬ LÝ CÁC EVENT ===
     
     if event == "taskCreated":
         overdue_warning = ""
@@ -478,14 +630,7 @@ def clickup_webhook():
                 old_status = before.get("status", "Không rõ") if isinstance(before, dict) else "Không rõ"
                 new_status = after.get("status", "Không rõ") if isinstance(after, dict) else "Không rõ"
                 
-                if new_status.lower() in ["complete", "completed", "closed", "done"]:
-                    # Lưu task hoàn thành
-                    user_tasks[action_user].append({
-                        "name": task_name,
-                        "status": new_status,
-                        "date": now
-                    })
-                    
+                if new_status.lower() in ["complete", "completed", "closed", "done", "achevé"]:
                     completion_status = ""
                     time_diff_msg = ""
                     
@@ -539,7 +684,6 @@ def clickup_webhook():
 """
                     send_message(msg.strip())
                     
-                    # ⭐ BACKUP VÀO GOOGLE SHEET
                     duration_str = calculate_duration(date_created) if date_created else ""
                     on_time_status = "Không xác định"
                     
@@ -632,7 +776,7 @@ def clickup_webhook():
 """
                 send_message(msg.strip())
         
-        if is_overdue and status.lower() not in ["complete", "completed", "closed", "done"]:
+        if is_overdue and status.lower() not in ["complete", "completed", "closed", "done", "achevé"]:
             msg = f"""
 ⚠️ <b>CẢNH BÁO: TASK QUÁ HẠN!</b>
 ━━━━━━━━━━━━━━━━━━━━
@@ -692,23 +836,10 @@ def clickup_webhook():
 def home():
     return "✅ ClickUp ↔ Telegram bot đang hoạt động!", 200
 
-@app.route('/test', methods=['GET'])
-def test():
-    send_message("🧪 Test message từ ClickUp bot!")
-    return "Message sent!", 200
-
-@app.route('/init_sheet', methods=['GET'])
-def init_sheet_route():
-    """Khởi tạo Google Sheet headers"""
-    result = init_sheet_headers()
-    if result:
-        return "✅ Sheet initialized! Check your Google Sheet.", 200
-    else:
-        return "❌ Failed to init sheet. Check Render logs for errors.", 500
+# Routes đã bỏ các test endpoints, chỉ giữ production endpoints
 
 @app.route('/setup_webhook', methods=['GET'])
 def setup_webhook():
-    """Set webhook cho Telegram - Chỉ gọi 1 lần sau khi deploy"""
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook"
     telegram_webhook = f"{WEBHOOK_URL}/telegram"
     
@@ -723,16 +854,25 @@ def setup_webhook():
 # === SCHEDULER ===
 scheduler = BackgroundScheduler()
 
-def schedule_daily_report():
-    """Lên lịch báo cáo hàng ngày lúc 22:00 (giờ VN)"""
+def schedule_reports():
     tz = pytz.timezone('Asia/Ho_Chi_Minh')
-    trigger = CronTrigger(hour=22, minute=0, timezone=tz)
-    scheduler.add_job(daily_report, trigger=trigger, id='daily_report', replace_existing=True)
+    
+    morning_trigger = CronTrigger(hour=9, minute=0, timezone=tz)
+    scheduler.add_job(morning_report, trigger=morning_trigger, id='morning_report', replace_existing=True)
+    print("✅ Morning report scheduled at 09:00 (Asia/Ho_Chi_Minh)")
+    
+    noon_trigger = CronTrigger(hour=12, minute=0, timezone=tz)
+    scheduler.add_job(noon_report, trigger=noon_trigger, id='noon_report', replace_existing=True)
+    print("✅ Noon report scheduled at 12:00 (Asia/Ho_Chi_Minh)")
+    
+    evening_trigger = CronTrigger(hour=22, minute=0, timezone=tz)
+    scheduler.add_job(evening_report, trigger=evening_trigger, id='evening_report', replace_existing=True)
+    print("✅ Evening report scheduled at 22:00 (Asia/Ho_Chi_Minh)")
+    
     scheduler.start()
-    print("✅ Daily report scheduled for 22:00 every day (Asia/Ho_Chi_Minh)")
+    print("🎯 All reports scheduled successfully!")
 
 if __name__ == '__main__':
-    schedule_daily_report()
-    # Lấy port từ biến môi trường (Render tự động set)
+    schedule_reports()
     port = int(os.getenv("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
