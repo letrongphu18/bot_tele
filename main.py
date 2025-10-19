@@ -125,7 +125,6 @@ def get_all_tasks_in_period(start_date, end_date):
         print("❌ CLICKUP_LIST_ID không được cấu hình!")
         return []
     
-    # Lấy TẤT CẢ tasks từ List
     url = f"https://api.clickup.com/api/v2/list/{CLICKUP_LIST_ID}/task"
     headers = {"Authorization": CLICKUP_API_TOKEN}
     params = {
@@ -141,7 +140,6 @@ def get_all_tasks_in_period(start_date, end_date):
             data = response.json()
             all_tasks = data.get("tasks", [])
             
-            # Filter theo thời gian TẠO trong Python
             start_ms = int(start_date.timestamp() * 1000)
             end_ms = int(end_date.timestamp() * 1000)
             
@@ -164,7 +162,6 @@ def get_all_tasks_in_period(start_date, end_date):
         return []
 
 def get_today_tasks():
-    """Lấy TẤT CẢ tasks đang active (chưa hoàn thành) trong List"""
     if not CLICKUP_LIST_ID:
         print("❌ CLICKUP_LIST_ID không được cấu hình!")
         return []
@@ -173,7 +170,7 @@ def get_today_tasks():
     headers = {"Authorization": CLICKUP_API_TOKEN}
     params = {
         "archived": "false",
-        "include_closed": "true"  # Bao gồm cả tasks đã hoàn thành để tính KPI
+        "include_closed": "true"
     }
     
     try:
@@ -193,7 +190,6 @@ def get_today_tasks():
         return []
 
 def get_week_tasks():
-    """Lấy tasks được TẠO trong tuần này (cho KPI tuần)"""
     now = get_vn_now()
     days_since_monday = now.weekday()
     start_of_week = (now - datetime.timedelta(days=days_since_monday)).replace(hour=0, minute=0, second=0, microsecond=0)
@@ -208,7 +204,7 @@ def analyze_tasks(tasks):
         'pending': 0,
         'overdue': 0,
         'unassigned': 0,
-        'in_progress': 0,  # Thêm tasks đang làm
+        'in_progress': 0,
         'by_user': {},
         'by_priority': {
             'urgent': 0,
@@ -222,7 +218,6 @@ def analyze_tasks(tasks):
         status_info = task.get('status', {})
         status = status_info.get('status', '').lower() if isinstance(status_info, dict) else ''
         
-        # Check status
         is_completed = status in ['complete', 'completed', 'closed', 'done', 'achevé']
         is_in_progress = status in ['in progress', 'en cours', 'doing']
         
@@ -234,12 +229,10 @@ def analyze_tasks(tasks):
             if is_in_progress:
                 stats['in_progress'] += 1
             
-            # Check quá hạn
             due_date = task.get('due_date')
             if due_date and check_overdue(due_date):
                 stats['overdue'] += 1
         
-        # Assignees
         assignees = task.get('assignees', [])
         
         if not assignees or len(assignees) == 0:
@@ -271,7 +264,6 @@ def analyze_tasks(tasks):
                     if due_date and check_overdue(due_date):
                         stats['by_user'][username]['overdue'] += 1
         
-        # Priority
         priority = task.get('priority')
         if isinstance(priority, dict):
             priority_id = priority.get('priority')
@@ -387,7 +379,6 @@ def generate_report(report_type="daily"):
     today_display = now.strftime("%d/%m/%Y")
     time_display = now.strftime("%H:%M")
     
-    # Lấy TẤT CẢ tasks đang active trong List
     tasks = get_today_tasks()
     stats = analyze_tasks(tasks)
     
@@ -431,7 +422,6 @@ def generate_report(report_type="daily"):
         if stats['unassigned'] > 0:
             msg += f"\n❓ <b>Chưa phân công:</b> {stats['unassigned']}"
         
-        # KPI theo user
         if stats['by_user']:
             msg += f"\n\n👥 <b>KPI theo người:</b>"
             
@@ -461,7 +451,6 @@ def generate_report(report_type="daily"):
                 if user_stats.get('overdue', 0) > 0:
                     msg += f" - 🔴 {user_stats['overdue']} quá hạn"
         
-        # Priority
         total_priority = sum(stats['by_priority'].values())
         if total_priority > 0:
             msg += f"\n\n⚡ <b>Độ ưu tiên:</b>"
@@ -489,7 +478,6 @@ def generate_report(report_type="daily"):
             msg += f"\n💪 Ngày mai cố gắng hơn nữa nhé!"
         msg += f"\n😴 Chúc ngủ ngon!"
         
-        # KPI tuần (tasks được TẠO tuần này)
         week_tasks = get_week_tasks()
         if week_tasks:
             week_stats = analyze_tasks(week_tasks)
@@ -836,7 +824,39 @@ def clickup_webhook():
 def home():
     return "✅ ClickUp ↔ Telegram bot đang hoạt động!", 200
 
-# Routes đã bỏ các test endpoints, chỉ giữ production endpoints
+# === CRONJOB ENDPOINTS (MỚI THÊM) ===
+@app.route('/trigger_morning_report', methods=['GET'])
+def trigger_morning_report():
+    print("\n🌅 Cronjob triggered morning report (9:00)...")
+    try:
+        msg = generate_report("morning")
+        send_message(msg)
+        return "✅ Morning report sent successfully!", 200
+    except Exception as e:
+        print(f"❌ Error in morning report: {e}")
+        return f"❌ Error: {e}", 500
+
+@app.route('/trigger_noon_report', methods=['GET'])
+def trigger_noon_report():
+    print("\n☀️ Cronjob triggered noon report (12:00)...")
+    try:
+        msg = generate_report("noon")
+        send_message(msg)
+        return "✅ Noon report sent successfully!", 200
+    except Exception as e:
+        print(f"❌ Error in noon report: {e}")
+        return f"❌ Error: {e}", 500
+
+@app.route('/trigger_evening_report', methods=['GET'])
+def trigger_evening_report():
+    print("\n🌙 Cronjob triggered evening report (22:00)...")
+    try:
+        msg = generate_report("evening")
+        send_message(msg)
+        return "✅ Evening report sent successfully!", 200
+    except Exception as e:
+        print(f"❌ Error in evening report: {e}")
+        return f"❌ Error: {e}", 500
 
 @app.route('/setup_webhook', methods=['GET'])
 def setup_webhook():
