@@ -824,39 +824,54 @@ def clickup_webhook():
 def home():
     return "✅ ClickUp ↔ Telegram bot đang hoạt động!", 200
 
-# === CRONJOB ENDPOINTS (ĐÃ TỐI ƯU) ===
-@app.route('/trigger_morning_report', methods=['GET'])
+# === CRONJOB ENDPOINTS (SIÊU TỐI ƯU) ===
+@app.route('/trigger_morning_report', methods=['GET', 'HEAD'])
 def trigger_morning_report():
+    # HEAD request từ cronjob - không xử lý gì
+    if request.method == 'HEAD':
+        return '', 200
+    
     print("\n🌅 Cronjob triggered morning report (9:00)...")
     try:
         msg = generate_report("morning")
         send_message(msg)
-        return {"status": "ok", "message": "Morning report sent"}, 200
+        # Response siêu nhỏ - chỉ 2 bytes
+        return 'OK', 200
     except Exception as e:
         print(f"❌ Error in morning report: {e}")
-        return {"status": "error", "message": str(e)[:100]}, 500
+        return 'ER', 500
 
-@app.route('/trigger_noon_report', methods=['GET'])
+@app.route('/trigger_noon_report', methods=['GET', 'HEAD'])
 def trigger_noon_report():
+    # HEAD request từ cronjob - không xử lý gì
+    if request.method == 'HEAD':
+        return '', 200
+    
     print("\n☀️ Cronjob triggered noon report (12:00)...")
     try:
         msg = generate_report("noon")
         send_message(msg)
-        return {"status": "ok", "message": "Noon report sent"}, 200
+        # Response siêu nhỏ - chỉ 2 bytes
+        return 'OK', 200
     except Exception as e:
         print(f"❌ Error in noon report: {e}")
-        return {"status": "error", "message": str(e)[:100]}, 500
+        return 'ER', 500
 
-@app.route('/trigger_evening_report', methods=['GET'])
+@app.route('/trigger_evening_report', methods=['GET', 'HEAD'])
 def trigger_evening_report():
+    # HEAD request từ cronjob - không xử lý gì
+    if request.method == 'HEAD':
+        return '', 200
+    
     print("\n🌙 Cronjob triggered evening report (22:00)...")
     try:
         msg = generate_report("evening")
         send_message(msg)
-        return {"status": "ok", "message": "Evening report sent"}, 200
+        # Response siêu nhỏ - chỉ 2 bytes
+        return 'OK', 200
     except Exception as e:
         print(f"❌ Error in evening report: {e}")
-        return {"status": "error", "message": str(e)[:100]}, 500
+        return 'ER', 500
 
 @app.route('/setup_webhook', methods=['GET'])
 def setup_webhook():
