@@ -824,17 +824,17 @@ def clickup_webhook():
 def home():
     return "✅ ClickUp ↔ Telegram bot đang hoạt động!", 200
 
-# === CRONJOB ENDPOINTS (MỚI THÊM) ===
+# === CRONJOB ENDPOINTS (ĐÃ TỐI ƯU) ===
 @app.route('/trigger_morning_report', methods=['GET'])
 def trigger_morning_report():
     print("\n🌅 Cronjob triggered morning report (9:00)...")
     try:
         msg = generate_report("morning")
         send_message(msg)
-        return "✅ Morning report sent successfully!", 200
+        return {"status": "ok", "message": "Morning report sent"}, 200
     except Exception as e:
         print(f"❌ Error in morning report: {e}")
-        return f"❌ Error: {e}", 500
+        return {"status": "error", "message": str(e)[:100]}, 500
 
 @app.route('/trigger_noon_report', methods=['GET'])
 def trigger_noon_report():
@@ -842,10 +842,10 @@ def trigger_noon_report():
     try:
         msg = generate_report("noon")
         send_message(msg)
-        return "✅ Noon report sent successfully!", 200
+        return {"status": "ok", "message": "Noon report sent"}, 200
     except Exception as e:
         print(f"❌ Error in noon report: {e}")
-        return f"❌ Error: {e}", 500
+        return {"status": "error", "message": str(e)[:100]}, 500
 
 @app.route('/trigger_evening_report', methods=['GET'])
 def trigger_evening_report():
@@ -853,10 +853,10 @@ def trigger_evening_report():
     try:
         msg = generate_report("evening")
         send_message(msg)
-        return "✅ Evening report sent successfully!", 200
+        return {"status": "ok", "message": "Evening report sent"}, 200
     except Exception as e:
         print(f"❌ Error in evening report: {e}")
-        return f"❌ Error: {e}", 500
+        return {"status": "error", "message": str(e)[:100]}, 500
 
 @app.route('/setup_webhook', methods=['GET'])
 def setup_webhook():
