@@ -4,8 +4,6 @@ import datetime
 import json
 import os
 from dotenv import load_dotenv
-from apscheduler.schedulers.background import BackgroundScheduler
-from apscheduler.triggers.cron import CronTrigger
 import pytz
 import gspread
 from google.oauth2.service_account import Credentials
@@ -97,7 +95,7 @@ def send_message(text, chat_id=None):
         "parse_mode": "HTML"
     }
     try:
-        res = requests.post(TELEGRAM_API, json=payload)
+        res = requests.post(TELEGRAM_API, json=payload, timeout=10)
         print(f"✅ Message sent (status: {res.status_code})")
         return res.status_code
     except Exception as e:
@@ -110,7 +108,7 @@ def get_task_info(task_id):
     headers = {"Authorization": CLICKUP_API_TOKEN}
     
     try:
-        response = requests.get(url, headers=headers)
+        response = requests.get(url, headers=headers, timeout=10)
         if response.status_code == 200:
             return response.json()
         else:
@@ -134,7 +132,7 @@ def get_all_tasks_in_period(start_date, end_date):
     
     try:
         print(f"\n🔍 Querying all tasks from List {CLICKUP_LIST_ID}...")
-        response = requests.get(url, headers=headers, params=params)
+        response = requests.get(url, headers=headers, params=params, timeout=15)
         
         if response.status_code == 200:
             data = response.json()
@@ -175,7 +173,7 @@ def get_today_tasks():
     
     try:
         print(f"\n🔍 Lấy tất cả tasks trong List {CLICKUP_LIST_ID}...")
-        response = requests.get(url, headers=headers, params=params)
+        response = requests.get(url, headers=headers, params=params, timeout=15)
         
         if response.status_code == 200:
             data = response.json()
@@ -493,21 +491,6 @@ def generate_report(report_type="daily"):
     
     return msg
 
-def morning_report():
-    print("\n🌅 Tạo morning report (9h)...")
-    msg = generate_report("morning")
-    send_message(msg)
-
-def noon_report():
-    print("\n☀️ Tạo noon report (12h)...")
-    msg = generate_report("noon")
-    send_message(msg)
-
-def evening_report():
-    print("\n🌙 Tạo evening report (22h)...")
-    msg = generate_report("evening")
-    send_message(msg)
-
 # === ROUTES ===
 @app.route('/telegram', methods=['POST'])
 def telegram_handler():
@@ -824,53 +807,47 @@ def clickup_webhook():
 def home():
     return "✅ ClickUp ↔ Telegram bot đang hoạt động!", 200
 
-# === CRONJOB ENDPOINTS (SIÊU TỐI ƯU) ===
+# === CRONJOB ENDPOINTS (SIÊU TỐI ƯU CHO RENDER FREE) ===
 @app.route('/trigger_morning_report', methods=['GET', 'HEAD'])
 def trigger_morning_report():
-    # HEAD request từ cronjob - không xử lý gì
     if request.method == 'HEAD':
         return '', 200
     
-    print("\n🌅 Cronjob triggered morning report (9:00)...")
+    print(f"\n🌅 Morning report triggered at {get_vn_now().strftime('%H:%M:%S')}")
     try:
         msg = generate_report("morning")
         send_message(msg)
-        # Response siêu nhỏ - chỉ 2 bytes
         return 'OK', 200
     except Exception as e:
-        print(f"❌ Error in morning report: {e}")
+        print(f"❌ Error: {e}")
         return 'ER', 500
 
 @app.route('/trigger_noon_report', methods=['GET', 'HEAD'])
 def trigger_noon_report():
-    # HEAD request từ cronjob - không xử lý gì
     if request.method == 'HEAD':
         return '', 200
     
-    print("\n☀️ Cronjob triggered noon report (12:00)...")
+    print(f"\n☀️ Noon report triggered at {get_vn_now().strftime('%H:%M:%S')}")
     try:
         msg = generate_report("noon")
         send_message(msg)
-        # Response siêu nhỏ - chỉ 2 bytes
         return 'OK', 200
     except Exception as e:
-        print(f"❌ Error in noon report: {e}")
+        print(f"❌ Error: {e}")
         return 'ER', 500
 
 @app.route('/trigger_evening_report', methods=['GET', 'HEAD'])
 def trigger_evening_report():
-    # HEAD request từ cronjob - không xử lý gì
     if request.method == 'HEAD':
         return '', 200
     
-    print("\n🌙 Cronjob triggered evening report (22:00)...")
+    print(f"\n🌙 Evening report triggered at {get_vn_now().strftime('%H:%M:%S')}")
     try:
         msg = generate_report("evening")
         send_message(msg)
-        # Response siêu nhỏ - chỉ 2 bytes
         return 'OK', 200
     except Exception as e:
-        print(f"❌ Error in evening report: {e}")
+        print(f"❌ Error: {e}")
         return 'ER', 500
 
 @app.route('/setup_webhook', methods=['GET'])
@@ -886,28 +863,6 @@ def setup_webhook():
     else:
         return f"❌ Lỗi set webhook!<br>Response: {result}", 500
 
-# === SCHEDULER ===
-scheduler = BackgroundScheduler()
-
-def schedule_reports():
-    tz = pytz.timezone('Asia/Ho_Chi_Minh')
-    
-    morning_trigger = CronTrigger(hour=9, minute=0, timezone=tz)
-    scheduler.add_job(morning_report, trigger=morning_trigger, id='morning_report', replace_existing=True)
-    print("✅ Morning report scheduled at 09:00 (Asia/Ho_Chi_Minh)")
-    
-    noon_trigger = CronTrigger(hour=12, minute=0, timezone=tz)
-    scheduler.add_job(noon_report, trigger=noon_trigger, id='noon_report', replace_existing=True)
-    print("✅ Noon report scheduled at 12:00 (Asia/Ho_Chi_Minh)")
-    
-    evening_trigger = CronTrigger(hour=22, minute=0, timezone=tz)
-    scheduler.add_job(evening_report, trigger=evening_trigger, id='evening_report', replace_existing=True)
-    print("✅ Evening report scheduled at 22:00 (Asia/Ho_Chi_Minh)")
-    
-    scheduler.start()
-    print("🎯 All reports scheduled successfully!")
-
 if __name__ == '__main__':
-    schedule_reports()
     port = int(os.getenv("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
