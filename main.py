@@ -12,14 +12,13 @@ load_dotenv()
 
 app = Flask(__name__)
 
-# === CONFIG ===
+# Configuration
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 CLICKUP_API_TOKEN = os.getenv("CLICKUP_API_TOKEN")
 CLICKUP_TEAM_ID = os.getenv("CLICKUP_TEAM_ID")
 CLICKUP_LIST_ID = os.getenv("CLICKUP_LIST_ID")
 
-# === GOOGLE SHEET CONFIG ===
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
 GOOGLE_CREDENTIALS = os.getenv("GOOGLE_CREDENTIALS_JSON")
 SHEET_ID = os.getenv("GOOGLE_SHEET_ID")
@@ -41,9 +40,10 @@ print("="*50)
 TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 WEBHOOK_URL = f"https://bot-tele-7jxc.onrender.com"
 
-# === HÀM THỜI GIAN ===
+
 def get_vn_now():
     return datetime.datetime.now(VN_TZ)
+
 
 def format_timestamp(timestamp):
     if not timestamp:
@@ -55,6 +55,7 @@ def format_timestamp(timestamp):
     except:
         return "Không xác định"
 
+
 def check_overdue(due_date):
     if not due_date:
         return False
@@ -65,6 +66,7 @@ def check_overdue(due_date):
         return now_vn > due_vn
     except:
         return False
+
 
 def calculate_duration(start_timestamp):
     if not start_timestamp:
@@ -84,7 +86,7 @@ def calculate_duration(start_timestamp):
     except:
         return ""
 
-# === HÀM GỬI TELEGRAM ===
+
 def send_message(text, chat_id=None):
     if chat_id is None:
         chat_id = CHAT_ID
@@ -102,7 +104,7 @@ def send_message(text, chat_id=None):
         print(f"❌ Error sending message: {e}")
         return None
 
-# === CLICKUP API FUNCTIONS ===
+
 def get_task_info(task_id):
     url = f"https://api.clickup.com/api/v2/task/{task_id}"
     headers = {"Authorization": CLICKUP_API_TOKEN}
@@ -117,6 +119,7 @@ def get_task_info(task_id):
     except Exception as e:
         print(f"❌ Error getting task info: {e}")
         return None
+
 
 def get_all_tasks_in_period(start_date, end_date):
     if not CLICKUP_LIST_ID:
@@ -159,6 +162,7 @@ def get_all_tasks_in_period(start_date, end_date):
         print(f"❌ Error getting tasks: {e}")
         return []
 
+
 def get_today_tasks():
     if not CLICKUP_LIST_ID:
         print("❌ CLICKUP_LIST_ID không được cấu hình!")
@@ -187,6 +191,7 @@ def get_today_tasks():
         print(f"❌ Error getting tasks: {e}")
         return []
 
+
 def get_week_tasks():
     now = get_vn_now()
     days_since_monday = now.weekday()
@@ -194,6 +199,7 @@ def get_week_tasks():
     end_of_week = (start_of_week + datetime.timedelta(days=6)).replace(hour=23, minute=59, second=59, microsecond=999999)
     
     return get_all_tasks_in_period(start_of_week, end_of_week)
+
 
 def analyze_tasks(tasks):
     stats = {
@@ -279,6 +285,7 @@ def analyze_tasks(tasks):
     
     return stats
 
+
 def get_priority_text(priority_data):
     if not priority_data:
         return "Không có"
@@ -297,7 +304,7 @@ def get_priority_text(priority_data):
     
     return priority_map.get(priority_id, "Không xác định")
 
-# === GOOGLE SHEET FUNCTIONS === 
+
 def get_gsheet_client():
     try:
         if not GOOGLE_CREDENTIALS:
@@ -314,6 +321,7 @@ def get_gsheet_client():
     except Exception as e:
         print(f"❌ Error connecting to Google Sheet: {e}")
         return None
+
 
 def init_sheet_headers():
     try:
@@ -338,6 +346,7 @@ def init_sheet_headers():
     except Exception as e:
         print(f"❌ Error init headers: {e}")
         return False
+
 
 def backup_to_sheet(task_info):
     try:
@@ -371,7 +380,7 @@ def backup_to_sheet(task_info):
         print(f"❌ Error backup to sheet: {e}")
         return False
 
-# === REPORT FUNCTIONS ===
+
 def generate_report(report_type="daily"):
     now = get_vn_now()
     today_display = now.strftime("%d/%m/%Y")
@@ -491,7 +500,7 @@ def generate_report(report_type="daily"):
     
     return msg
 
-# === ROUTES ===
+
 @app.route('/telegram', methods=['POST'])
 def telegram_handler():
     data = request.get_json()
@@ -509,6 +518,7 @@ def telegram_handler():
             send_message(msg)
     
     return {"ok": True}, 200
+
 
 @app.route('/clickup', methods=['POST', 'GET'])
 def clickup_webhook():
@@ -803,11 +813,12 @@ def clickup_webhook():
     
     return {"ok": True}, 200
 
+
 @app.route('/', methods=['GET'])
 def home():
     return "✅ ClickUp ↔ Telegram bot đang hoạt động!", 200
 
-# === CRONJOB ENDPOINTS (SIÊU TỐI ƯU CHO RENDER FREE) ===
+
 @app.route('/trigger_morning_report', methods=['GET', 'HEAD'])
 def trigger_morning_report():
     if request.method == 'HEAD':
@@ -821,6 +832,7 @@ def trigger_morning_report():
     except Exception as e:
         print(f"❌ Error: {e}")
         return 'ER', 500
+
 
 @app.route('/trigger_noon_report', methods=['GET', 'HEAD'])
 def trigger_noon_report():
@@ -836,6 +848,7 @@ def trigger_noon_report():
         print(f"❌ Error: {e}")
         return 'ER', 500
 
+
 @app.route('/trigger_evening_report', methods=['GET', 'HEAD'])
 def trigger_evening_report():
     if request.method == 'HEAD':
@@ -850,6 +863,7 @@ def trigger_evening_report():
         print(f"❌ Error: {e}")
         return 'ER', 500
 
+
 @app.route('/setup_webhook', methods=['GET'])
 def setup_webhook():
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook"
@@ -862,6 +876,7 @@ def setup_webhook():
         return f"✅ Webhook đã được set thành công!<br>URL: {telegram_webhook}<br>Response: {result}", 200
     else:
         return f"❌ Lỗi set webhook!<br>Response: {result}", 500
+
 
 if __name__ == '__main__':
     port = int(os.getenv("PORT", 5000))
